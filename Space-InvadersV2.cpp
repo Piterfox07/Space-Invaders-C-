@@ -396,7 +396,7 @@ int main()
     ///ALERTA: NAO MODIFICAR O TRECHO DE CODIGO, ACIMA.
 
     int m[ALTURA][LARGURA] = {};
-    StatusPersonagem personagem {{2, 22}, 3}; // Variavel do personagem
+    StatusPersonagem personagem {{LARGURA/2, ALTURA-2}, 3}; // Variavel do personagem
 
     for (int i = 0; i < ALTURA; i++) {
         for (int j = 0; j < LARGURA; j++) {
@@ -420,7 +420,7 @@ int main()
         for (int i = 0; i < ALTURA; i++) {
             for (int j = 0; j < LARGURA; j++) {
                 if (i == personagem.pontoPersonagem.y && j == personagem.pontoPersonagem.x) {
-                    cout << 'O'; // personagem
+                    cout << '^'; // personagem
                 } else {
                     switch (m[i][j]) {
                         case 0: cout << ' '; break;      // caminho
