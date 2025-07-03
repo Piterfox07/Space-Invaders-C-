@@ -7,7 +7,6 @@
 #include <fstream>
 #include <string>
 #include <vector>
-#include <algorithm>
 
 #define ALTURA 25
 #define LARGURA 25
@@ -18,31 +17,27 @@ struct Ponto{
     int x, y;
 };
 
-struct StatusPersonagem{
-    Ponto pontoPersonagem;
+struct Personagem{
+    Ponto coordenadasP;
     int vida, score;
     string nome;
 };
 
-struct Projetil {
-    Ponto pos;
-    int direcao; // -1 para cima (jogador), 1 para baixo (inimigo)
-    bool ativo = true;
-};
-
-struct Inimigo {
-    Ponto pos;
-    bool vivo = true;
-};
-
-struct StatusInimigo{
-    Ponto pontoInimigo;
+struct Inimigos{
+    Ponto coordenadasI;
     bool vivo;
 };
 
-vector<Inimigo> inimigos;
-vector<Projetil> projeteis;
+struct Disparo {
+    Ponto coordenadasD;
+    bool ativo;  // se disparo está ativo na tela
+    int direcao; // 1 para disparo inimigo (pra baixo), -1 para disparo jogador (pra cima)
+};
 
+vector<Inimigos> inimigos;
+vector<Disparo> disparos;
+
+int direcaoInimigos = 1;
 
 void mudarCor(int cor) {
     HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -96,34 +91,26 @@ void textoCentralizado(const string& texto, const string& corHex) {
     textoCentralizado(texto, cor); // Chama a versão numérica
 }
 
-void dispararProjetil(const StatusPersonagem& jogador) {
-    Projetil p;
-    p.pos = jogador.pontoPersonagem;
-    p.pos.y -= 1;
-    p.direcao = -1;
-    projeteis.push_back(p);
-}
+void movimentacaoPersonagem(char tecla, Personagem &personagem, int mapa[ALTURA][LARGURA]){
 
-void movimentacaoPersonagem(char tecla, StatusPersonagem &personagem, int mapa[ALTURA][LARGURA]){
-
-    int newX = personagem.pontoPersonagem.x;
+    int newX = personagem.coordenadasP.x;
 
     switch (tecla) {
         case 75: case 'a': case 'A': newX--; break; // Esquerda
         case 77: case 'd': case 'D': newX++; break; // Direita
-        case 32: dispararProjetil(personagem);
+        case 32: //dispararProjetil(personagem);
         break;
         default: break;
     }
 
     if(newX >= 0 && newX < LARGURA) {
-        if(mapa[personagem.pontoPersonagem.y][newX] != 1) {  // Permite movimento em qualquer tile que não seja parede e tenha chão
-            personagem.pontoPersonagem.x = newX;
+        if(mapa[personagem.coordenadasP.y][newX] != 1) {  // Permite movimento em qualquer tile que não seja parede e tenha chão
+            personagem.coordenadasP.x = newX;
         }
     }
 }
 
-void ordenarRankings(StatusPersonagem scores[], int inicio, int fim) {
+void ordenarRankings(Personagem scores[], int inicio, int fim) {
     if (inicio >= fim) return;
 
     int temp = scores[fim].score;
@@ -144,7 +131,7 @@ void ordenarRankings(StatusPersonagem scores[], int inicio, int fim) {
 void exibirTop10() {
     HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
     const int MAX = 100;
-    StatusPersonagem scores[MAX];
+    Personagem scores[MAX];
     int contador = 0;
 
     ifstream arquivo("pontuacao.txt");
@@ -373,7 +360,7 @@ void cronometro(auto &inicio, int &minuto = 0) {
     cout << duracao.count() << "                                                                 " << endl;
 }
 
-void salvarPontuacao(StatusPersonagem personagem) {
+void salvarPontuacao(Personagem personagem) {
     ofstream arquivo("pontuacao.txt", ios::app);
     if (arquivo.is_open()) {
         arquivo << personagem.nome << ": " << personagem.score << endl;
@@ -381,7 +368,7 @@ void salvarPontuacao(StatusPersonagem personagem) {
     }
 }
 
-void fimDeJogo(StatusPersonagem& personagem, bool venceu) {
+void fimDeJogo(Personagem& personagem, bool venceu) {
 
     system("cls");
     cout << "Fim de jogo! " << (venceu ? "Você venceu!" : "Você morreu!") << endl;
@@ -400,6 +387,66 @@ void fimDeJogo(StatusPersonagem& personagem, bool venceu) {
         salvarPontuacao(personagem);
         cout << "Pontuação salva!" << endl;
     }
+}
+
+void atualizarDisparos() {
+    for (auto& d : disparos) {
+        if (d.ativo) {
+            d.coordenadasD.y += d.direcao;  // sobe ou desce no eixo y
+            // desativa disparo que saiu da tela
+            if (d.coordenadasD.y < 0 || d.coordenadasD.y > ALTURA) {
+                d.ativo = false;
+            }
+        }
+    }
+}
+
+void atualizarInimigos() {
+    for (auto& inimigo : inimigos) {
+        if (inimigo.vivo) {
+            inimigo.coordenadasI.x += direcaoInimigos;
+            // lógica para mudar direção se bater na borda
+            if (inimigo.coordenadasI.x <= 0 || inimigo.coordenadasI.x >= LARGURA) {
+                direcaoInimigos = -direcaoInimigos;
+                // desce um pouco
+                for (auto& i : inimigos) {
+                    i.coordenadasI.y += 1;
+                }
+                break;
+            }
+        }
+    }
+}
+
+bool colisao(const Disparo& d, const Inimigos& i) {
+    // supondo que a posição seja em pixels, e inimigo tem tamanho 10x10 por exemplo
+    int tamanhoInimigo = 10;
+    return d.coordenadasD.x >= i.coordenadasI.x && d.coordenadasD.x <= i.coordenadasI.x + tamanhoInimigo &&
+           d.coordenadasD.y >= i.coordenadasI.y && d.coordenadasD.y <= i.coordenadasI.y + tamanhoInimigo;
+}
+
+void verificarColisoes() {
+    for (auto& d : disparos) {
+        if (d.ativo && d.direcao == -1) {  // disparos do jogador só atingem inimigos
+            for (auto& i : inimigos) {
+                if (i.vivo && colisao(d, i)) {
+                    i.vivo = false;
+                    d.ativo = false;
+                    // aqui pode incrementar pontuação, etc.
+                }
+            }
+        }
+    }
+}
+
+void atirarJogador(int xJogador, int yJogador) {
+    Disparo d;
+    d.coordenadasD.x = xJogador;
+    d.coordenadasD.y = yJogador;
+    d.ativo = true;
+    d.direcao = -1;  // sobe
+
+    disparos.push_back(d);
 }
 
 int main()
@@ -421,7 +468,7 @@ int main()
     ///ALERTA: NAO MODIFICAR O TRECHO DE CODIGO, ACIMA.
 
     int m[ALTURA][LARGURA] = {};
-    StatusPersonagem personagem {{LARGURA/2, ALTURA-2}, 3}; // Variavel do personagem
+    Personagem personagem {{LARGURA/2, ALTURA-2}, 3}; // Variavel do personagem
 
     for (int i = 0; i < ALTURA; i++) {
         for (int j = 0; j < LARGURA; j++) {
@@ -435,15 +482,6 @@ int main()
 
     printarMenuInicial();
 
-    for (int linha = 0; linha < 5; ++linha) {
-        for (int col = 0; col < 8; ++col) {
-            Inimigo ini;
-            ini.pos.x = 5 + col * 4;
-            ini.pos.y = 2 + linha * 2;
-            inimigos.push_back(ini);
-        }
-    }
-
     auto inicio = chrono::steady_clock::now();
     int minuto = 0;
 
@@ -453,26 +491,13 @@ int main()
         posicao(0, 0);
         for (int i = 0; i < ALTURA; i++) {
             for (int j = 0; j < LARGURA; j++) {
-                if (i == personagem.pontoPersonagem.y && j == personagem.pontoPersonagem.x) {
+                if (i == personagem.coordenadasP.y && j == personagem.coordenadasP.x) {
                     cout << '^'; // personagem
                 } else {
                     switch (m[i][j]) {
                         case 0: cout << ' '; break;      // caminho
                         case 1: cout << char(219); break; // parede
                     }
-                }
-                // Desenha inimigos
-                for (const auto& ini : inimigos) {
-                    if (ini.vivo) {
-                        posicao(ini.pos.x, ini.pos.y);
-                        cout << "@"; // símbolo do inimigo
-                    }
-                }
-
-                // Desenha projéteis
-                for (const auto& p : projeteis) {
-                    posicao(p.pos.x, p.pos.y);
-                    cout << "|"; // símbolo do projétil
                 }
             }
             cout << '\n';
@@ -481,28 +506,6 @@ int main()
         if ( _kbhit() ){
             char tecla = getch();
             movimentacaoPersonagem(tecla, personagem, m);
-            for (auto& p : projeteis) {
-                p.pos.y += p.direcao;
-
-                // Colisão com inimigos
-                if (p.direcao == -1) {
-                    for (auto& ini : inimigos) {
-                        if (ini.vivo && p.pos.x == ini.pos.x && p.pos.y == ini.pos.y) {
-                            ini.vivo = false;
-                            p.ativo = false;
-                        }
-                    }
-                }
-
-                // Fora da tela
-                if (p.pos.y < 0 || p.pos.y >= ALTURA) {
-                    p.ativo = false;
-                }
-            }
-
-            // Remove projéteis inativos
-            projeteis.erase(remove_if(projeteis.begin(), projeteis.end(),
-                [](const Projetil& p) { return !p.ativo; }), projeteis.end());
          }
     }
 
