@@ -39,18 +39,23 @@ struct Disparo {
 vector<Inimigos> inimigos;
 vector<Disparo> disparos;
 
-
 int tickGlobal = 0;
-int tickMovInimigos            = 15;
-const int TICK_MOV_JOGADOR     = 2;
-const int TICK_DISPAROS        = 1;
-const int TICK_INTERVALO_DISPARO = 10;
 
-int tickUltimoMovJogador   = 0;
-int tickUltimoMovInimigos  = 0;
-int tickUltimoDisparo      = -TICK_INTERVALO_DISPARO;
+// Ticks de ação (controle de velocidade)
+const int TICK_MOV_JOGADOR        = 5;   // Delay entre movimentos do jogador
+const int TICK_INTERVALO_DISPARO  = 10;  // Delay entre tiros do jogador
+const int TICK_DISPAROS           = 1;   // Velocidade com que os tiros se movem
+const int TICK_MOV_INIMIGOS_BASE  = 15;  // Base da velocidade dos inimigos (ajustada dinamicamente)
 
-int direcaoInimigos = 1;
+// Últimos ticks de ação
+int tickUltimoMovJogador      = 0;
+int tickUltimoDisparoJogador  = -TICK_INTERVALO_DISPARO;
+int tickUltimoMovInimigos     = 0;
+
+int tickMovInimigos = TICK_MOV_INIMIGOS_BASE;   // Velocidade atual dos inimigos (pode ser ajustada dinamicamente)
+int direcaoInimigos = 1;                        // Direção dos inimigos: 1 = direita, -1 = esquerda
+bool teclaEspacoAnterior = false;               // Para detecção de toque de tecla (ex: espaço)
+
 
 void mudarCor(int cor) {
     HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -106,8 +111,8 @@ void textoCentralizado(const string& texto, const string& corHex) {
 
 void dispararProjetil(const Personagem& personagem) {
 
-    if (tickGlobal - tickUltimoDisparo < 10) return; // intervalo de 10 ticks
-    tickUltimoDisparo = tickGlobal;
+    if (tickGlobal - tickUltimoDisparoJogador < 10) return; // intervalo de 10 ticks
+    tickUltimoDisparoJogador = tickGlobal;
 
     Disparo d;
     d.coordenadasD.x = personagem.coordenadasP.x;
@@ -117,19 +122,14 @@ void dispararProjetil(const Personagem& personagem) {
     disparos.push_back(d);
 }
 
-void movimentacaoPersonagem(char tecla, Personagem &personagem, int mapa[ALTURA][LARGURA]){
-
+void movimentacaoPersonagem(char tecla, Personagem &personagem, int mapa[ALTURA][LARGURA]) {
     int newX = personagem.coordenadasP.x;
 
-    switch (tecla) {
-        case 75: case 'a': case 'A': newX--; break; // Esquerda
-        case 77: case 'd': case 'D': newX++; break; // Direita
-        case 32: dispararProjetil(personagem); break;
-        default: break;
-    }
+    if (tecla == 'A') newX--;
+    else if (tecla == 'D') newX++;
 
-    if(newX >= 0 && newX < LARGURA) {
-        if(mapa[personagem.coordenadasP.y][newX] != 1) {  // Permite movimento em qualquer tile que não seja parede e tenha chão
+    if (newX >= 0 && newX < LARGURA) {
+        if (mapa[personagem.coordenadasP.y][newX] != 1) {
             personagem.coordenadasP.x = newX;
         }
     }
@@ -228,7 +228,7 @@ void informacoesMenu(){
        if(cursorInfMenuPrincipal == 0){
             posicao(0, 9); textoCentralizado("Universidade do Vale do Itajai");
             posicao(0, 13); textoCentralizado("Professor: Alex Luciano Roesler Rese");
-            posicao(0, 17); textoCentralizado("Alunos: Marlon Ranguet Zucchetti, Gabriel Paranagua, Henrique Gustavo Gonzaga Belli");
+            posicao(0, 17); textoCentralizado("Alunos: Henrique Gustavo Gonzaga Belli");
         }
 
         // imprime informações quando o cursor estiver em cima de mapa e itens
@@ -276,20 +276,6 @@ void informacoesMenu(){
             }
         }
     }
-}
-
-void creditos(){
-    HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
-
-    system("cls");
-
-    posicao(0, 9); textoCentralizado("Universidade do Vale do Itajai");
-    posicao(0, 13); textoCentralizado("Professor: Alex Luciano Roesler Rese");
-    posicao(0, 17); textoCentralizado("Aluno: Henrique Gustavo Gonzaga Belli");
-    posicao(0, 29);
-
-    system("pause");
-
 }
 
 int printarMenuInicial(){
@@ -400,13 +386,14 @@ void fimDeJogo(Personagem& personagem, bool venceu) {
     cout << "Sua pontuação final foi de: " << personagem.score << " pts." << endl;
 
     cout << "Digite seu nome: ";
-    cin >> personagem.nome;
+    FlushConsoleInputBuffer(GetStdHandle(STD_INPUT_HANDLE));
+    getline(cin, personagem.nome);
 
     if (personagem.nome == "apagarArquivo") {
         ofstream arquivo("pontuacao.txt", ios::trunc);
         arquivo.close();
         cout << "Pontuações resetadas!" << endl;
-    } else if (personagem.nome == "rodadaTeste"){
+    } else if (personagem.nome == "rodadaTeste" || personagem.nome == ""){
         cout << "Sua pontuação nao foi salva!" << endl;
     }else {
         salvarPontuacao(personagem);
@@ -458,7 +445,7 @@ void ajustarVelocidadeInimigos() {
     if (vivos == 0) return; // todos mortos — já ganhou
 
     // quanto menos inimigos, menor o intervalo
-    tickMovInimigos = max(2, 10 * vivos / (int)inimigos.size());
+    tickMovInimigos = max(6, 20 * vivos / (int)inimigos.size());
 }
 
 bool verificarColisoes(Personagem &jogador) {
@@ -542,7 +529,7 @@ void inimigosAtiram(){
 
     if (vivos == 0) return;
 
-    int chance = max(30, 150 * vivos / (int)inimigos.size()); // mínimo 15
+    int chance = max(100, 600 * vivos / (int)inimigos.size()); // mínimo 15
 
     for(auto& i : inimigos){
         if(i.vivo && rand()%chance == 0){
@@ -615,15 +602,6 @@ void printarJogo(Personagem personagem, int m[ALTURA][LARGURA]){
     }
 }
 
-bool verificarDerrota(Personagem jogador){
-    for(auto& i : inimigos){
-        if(i.vivo && i.coordenadasI.y >= jogador.coordenadasP.y){
-            return true;
-        }
-    }
-    return false;
-}
-
 bool verificarVitoria(){
 
     for(auto& i : inimigos){
@@ -691,31 +669,47 @@ int main()
 
         cronometro(inicio, minuto);
 
-        atualizarDisparos();
+        atualizarDisparos(); //atualizacao de todos os disparos na tela
 
-        if (tickGlobal - tickUltimoMovInimigos >= tickMovInimigos) {
+        if (tickGlobal - tickUltimoMovInimigos >= tickMovInimigos) { /// movimentacao dos inimigos
             moverInimigos();
-            inimigosAtiram();
             tickUltimoMovInimigos = tickGlobal;
         }
+        inimigosAtiram();
 
-        printarJogo(personagem, m);
+        printarJogo(personagem, m); //desenhar mapa, inimigos, disparos, personagem na tela
 
-        if (_kbhit()) {
-            if (tickGlobal - tickUltimoMovJogador >= TICK_MOV_JOGADOR) {
-                char tecla = getch();
-                movimentacaoPersonagem(tecla, personagem, m);
+
+        ///movimentacao/comandos
+        if (tickGlobal - tickUltimoMovJogador >= TICK_MOV_JOGADOR) {
+            if (GetAsyncKeyState(VK_LEFT) & 0x8000 || GetAsyncKeyState('A') & 0x8000) {
+                movimentacaoPersonagem('A', personagem, m);
+                tickUltimoMovJogador = tickGlobal;
+            }
+            else if (GetAsyncKeyState(VK_RIGHT) & 0x8000 || GetAsyncKeyState('D') & 0x8000) {
+                movimentacaoPersonagem('D', personagem, m);
                 tickUltimoMovJogador = tickGlobal;
             }
         }
 
-        bool perdeu = verificarColisoes(personagem);
+        bool teclaEspacoAgora = (GetAsyncKeyState(VK_SPACE) & 0x8000);
+        if (teclaEspacoAgora && !teclaEspacoAnterior) {
+            if (tickGlobal - tickUltimoDisparoJogador >= TICK_INTERVALO_DISPARO) {
+                dispararProjetil(personagem);
+                tickUltimoDisparoJogador = tickGlobal;
+            }
+        }
+        teclaEspacoAnterior = teclaEspacoAgora;
+
+
+
+        bool perdeu = verificarColisoes(personagem); //verificacao para ver se os inimigos tocaram em baixo ou o personagem perdeu todas as vidas
 
         if(perdeu){ // fim de jogo
-            fimDeJogo(personagem, false);
+            fimDeJogo(personagem, false); // Perdeu
             return 0;
         } else if (verificarVitoria()){
-            fimDeJogo(personagem, true);
+            fimDeJogo(personagem, true); // Ganhou
             return 0;
         }
     }
