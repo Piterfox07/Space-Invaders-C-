@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <cstdlib>
+#include <algorithm>
 
 #define ALTURA 25
 #define LARGURA 35
@@ -19,7 +20,7 @@ struct Ponto{
 };
 
 struct Personagem{
-    Ponto coordenadasP;
+    Ponto coordenadasP; /// x = mov. -esquerda/+direita,  y = mov. -cima/+baixo
     int vida, score;
     string nome;
 };
@@ -32,18 +33,25 @@ struct Inimigos{
 
 struct Disparo {
     Ponto coordenadasD;
-    bool ativo;  // se disparo está ativo na tela
     int direcao; // 1 para disparo inimigo (pra baixo), -1 para disparo jogador (pra cima)
+    bool ativo;  // se disparo está ativo na tela
 };
 
+struct Efeito {
+    int x, y;
+    int duracao; // quantos ticks vai ficar na tela
+};
+
+vector<Efeito> efeitos;
 vector<Inimigos> inimigos;
 vector<Disparo> disparos;
 
+bool poderes[5] = {false}; /// VidaExtra / +velocidade / +tiros / +velDeDisparo / +Pontos / Freeze
 int tickGlobal = 0;
 
 // Ticks de ação (controle de velocidade)
-const int TICK_MOV_JOGADOR        = 5;   // Delay entre movimentos do jogador
-const int TICK_INTERVALO_DISPARO  = 10;  // Delay entre tiros do jogador
+int TICK_MOV_JOGADOR              = 2;   // Delay entre movimentos do jogador
+const int TICK_INTERVALO_DISPARO  = 5;   // Delay entre tiros do jogador
 const int TICK_DISPAROS           = 1;   // Velocidade com que os tiros se movem
 const int TICK_MOV_INIMIGOS_BASE  = 15;  // Base da velocidade dos inimigos (ajustada dinamicamente)
 
@@ -58,11 +66,11 @@ bool teclaEspacoAnterior = false;               // Para detecção de toque de t
 bool podeTocarSom = true;
 
 
-void tocarBeep() {
+void tocarBeep(int timbre) {
     if (podeTocarSom) {
         podeTocarSom = false;
-        std::thread([](){
-            Beep(100, 200);
+        std::thread([timbre](){
+            Beep(timbre, 200);
             podeTocarSom = true;
         }).detach();
     }
@@ -89,7 +97,6 @@ void posicao(int x, int y){
     SetConsoleCursorPosition(hConsole, cordenada);
 }
 
-//Função para limpar apenas uma area da tela
 void limparTela(int x, int y, int largura, int altura) {
     for (int i = 0; i < altura; i++) {
         posicao(x, y + i);
@@ -120,17 +127,53 @@ void textoCentralizado(const string& texto, const string& corHex) {
     textoCentralizado(texto, cor); // Chama a versão numérica
 }
 
-void dispararProjetil(const Personagem& personagem) {
+void dispararProjetil(const Personagem& personagem, int nave) {
 
-    if (tickGlobal - tickUltimoDisparoJogador < 10) return; // intervalo de 10 ticks
+    bool disparoAtivo = false;
+    int offsets[] = { -1, 0, 1 };
+
+    if (tickGlobal - tickUltimoDisparoJogador < TICK_INTERVALO_DISPARO) return; // intervalo de 10 ticks
     tickUltimoDisparoJogador = tickGlobal;
 
-    Disparo d;
-    d.coordenadasD.x = personagem.coordenadasP.x;
-    d.coordenadasD.y = personagem.coordenadasP.y - 1;
-    d.direcao = -1;
-    d.ativo = true;
-    disparos.push_back(d);
+    for (const auto& d : disparos) {
+        if (d.ativo && d.direcao == -1) {
+            disparoAtivo = true; // já tem disparo do jogador ativo
+        }
+    }
+
+    if (disparoAtivo && poderes[3] == false) return; // se ja tiver disparo ativo E o poder de atirar rapido estiver desativado, somente um disparo por vez permitido
+
+    int x = personagem.coordenadasP.x;
+    int y = personagem.coordenadasP.y - 1;
+
+    switch (nave) {
+        case 1: // Nave comum
+            disparos.push_back({x, y, -1, true }); /// coordenadas x, coordenadas y -1, direcao disparo, ativo = true
+            break;
+
+        case 2: // Tiro duplo
+            if (x - 2 >= 0 && x + 1 < LARGURA -1){
+                disparos.push_back({ x - 1, y, -1, true });
+                disparos.push_back({ x + 1, y, -1, true });
+            }else if (x - 2 >= 0){
+                disparos.push_back({ x - 1, y, -1, true });
+                disparos.push_back({ x,     y, -1, true });
+            } else /*(x + 1 < LARGURA -1)*/{
+                disparos.push_back({ x + 1, y, -1, true });
+                disparos.push_back({ x,     y, -1, true });
+            }
+            break;
+
+        case 3: // Disparo triplo
+            disparos.push_back({ x,     y, -1, true });
+            if (x - 2 >= 0){
+                disparos.push_back({ x - 1, y, -1, true });
+            }
+            if (x + 1 < LARGURA -1){
+                disparos.push_back({ x + 1, y, -1, true });
+            }
+            break;
+    }
 }
 
 void movimentacaoPersonagem(char tecla, Personagem &personagem, int mapa[ALTURA][LARGURA]) {
@@ -164,7 +207,7 @@ void ordenarRankings(Personagem scores[], int inicio, int fim) {
     ordenarRankings(scores, i + 2, fim);
 }
 
-void exibirTop10() {
+void exibirTop15() {
     HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
     const int MAX = 100;
     Personagem scores[MAX];
@@ -180,11 +223,11 @@ void exibirTop10() {
 
     system("cls");
 
-    textoCentralizado("=== TOP 10 ===", 5);
+    textoCentralizado("=== TOP 15 ===", 5);
 
     cout << endl << endl;
 
-    for (int i = 0; i < min(10, contador); i++) {
+    for (int i = 0; i < min(15, contador); i++) {
         string linha = to_string(i+1) + ". " + scores[i].nome + " - " + to_string(scores[i].score);
         textoCentralizado(linha);
     }
@@ -257,8 +300,11 @@ void informacoesMenu(){
 
         // imprime informações quando o cursor estiver em cima de score
         if(cursorInfMenuPrincipal == 2){
-            posicao(0, 7); textoCentralizado("CADA INIMIGO ELIMINADO, CONCEDE 10 PONTOS");
-            posicao(0, 8); textoCentralizado("Nada alem disso diminui ou aumenta os pontos", 8);
+            posicao(0, 7); textoCentralizado("CADA INIMIGO ELIMINADO, CONCEDE ENTRE 10 E 30 PONTOS:");
+            posicao(0, 9); textoCentralizado("Inimigos inicialmente Vermelhos = 30 PONTOS", 4);
+            posicao(0, 11); textoCentralizado("Inimigos inicialmente Amarelos = 20 PONTOS", 6);
+            posicao(0, 13); textoCentralizado("Inimigos inicialmente Verdes = 10 PONTOS", 2);
+            posicao(0, 15); textoCentralizado("Nada alem disso diminui ou aumenta os pontos", 8);
         }
 
 
@@ -289,18 +335,154 @@ void informacoesMenu(){
     }
 }
 
+int escolherNave(){
+
+    while(true){
+        system("cls");
+
+        posicao(0, 11); textoCentralizado("Escolha sua nave:", 9);
+        posicao(0, 13); textoCentralizado("1 - Tiro Unico / Velocidade Maxima");
+        posicao(0, 15); textoCentralizado("2 - Tiro Duplo / Velocidade Media");
+        posicao(0, 17); textoCentralizado("3 - Tiro Triplo / Velocidade Minima");
+
+        char tecla = getch();
+
+        switch(tecla){
+            case '1':
+                while(true){
+                    system("cls");
+                    posicao(0, 11); textoCentralizado("Tem certeza que deseja escolher a nave 1?", 9);
+                    posicao(0, 13); textoCentralizado("1 - Sim          2 - Nao");
+
+                    char confirmar = getch();
+                    if (confirmar == '1') {
+                        system("cls");
+                        return 1;
+                    } else if (confirmar == '2') {
+                        system("cls");
+                        break;
+                    }
+                }
+                break;
+
+            case '2':
+                while(true){
+                    system("cls");
+                    posicao(0, 11); textoCentralizado("Tem certeza que deseja escolher a nave 2?", 9);
+                    posicao(0, 13); textoCentralizado("1 - Sim          2 - Nao");
+
+                    char confirmar = getch();
+                    if (confirmar == '1') {
+                        system("cls");
+                        return 2;
+                    } else if (confirmar == '2') {
+                        system("cls");
+                        break;
+                    }
+                }
+                break;
+
+            case '3':
+                while(true){
+                    system("cls");
+                    posicao(0, 11); textoCentralizado("Tem certeza que deseja escolher a nave 3?", 9);
+                    posicao(0, 13); textoCentralizado("1 - Sim          2 - Nao");
+
+                    char confirmar = getch();
+                    if (confirmar == '1') {
+                        system("cls");
+                        return 3;
+                    } else if (confirmar == '2') {
+                        system("cls");
+                        break;
+                    }
+                }
+                break;
+        }
+    }
+}
+
+int escolherDificuldade(bool &finalizarMenuPrincipal){
+
+    while(true){
+        system("cls");
+
+        posicao(0, 11); textoCentralizado("Escolha o nivel de dificuldade que deseja jogar:", 12);
+        posicao(0, 13); textoCentralizado("1 - FACIL - Todos os inimigos possuem durabilidade minima");
+        posicao(0, 15); textoCentralizado("2 - NORMAL - Durabilidade inimiga mista");
+        posicao(0, 17); textoCentralizado("3 - DIFICIL - Todos os inimigos possuem durabilidade maxima");
+        posicao(0, 28); cout << "Pressione qualquer outra tecla para retornar";
+
+        char tecla = getch();
+
+        switch(tecla){
+            case '1':
+                while(true){
+                    system("cls");
+                    posicao(0, 11); textoCentralizado("Tem certeza que deseja escolher a dificuldade FACIL?", 12);
+                    posicao(0, 13); textoCentralizado("1 - Sim          2 - Nao");
+
+                    char confirmar = getch();
+                    if (confirmar == '1') {
+                        finalizarMenuPrincipal = true;
+                        return 1;
+                    } else if (confirmar == '2') {
+                        break;
+                    }
+                }
+                break;
+
+            case '2':
+                while(true){
+                    system("cls");
+                    posicao(0, 11); textoCentralizado("Tem certeza que deseja escolher a dificuldade NORMAL?", 12);
+                    posicao(0, 13); textoCentralizado("1 - Sim          2 - Nao");
+
+                    char confirmar = getch();
+                    if (confirmar == '1') {
+                        finalizarMenuPrincipal = true;
+                        return 2;
+                    } else if (confirmar == '2') {
+                        break; // <-- Sai da confirmação e volta para o menu principal
+                    }
+                }
+                break;
+
+            case '3':
+                while(true){
+                    system("cls");
+                    posicao(0, 11); textoCentralizado("Tem certeza que deseja escolher a dificuldade DIFICIL?", 12);
+                    posicao(0, 13); textoCentralizado("1 - Sim          2 - Nao");
+
+                    char confirmar = getch();
+                    if (confirmar == '1') {
+                        finalizarMenuPrincipal = true;
+                        return 3;
+                    } else if (confirmar == '2') {
+                        break;
+                    }
+                }
+                break;
+
+            default:
+                return 0;
+        }
+    }
+}
+
 int printarMenuInicial(){
     HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
     int cursorMenuPrincipal=0, cursorMenuPrincipalNew;
     char teclaMenuPrincipal;
     bool finalizarMenuPrincipal = false;
+    int dificuldade = 0;
 
     while(!finalizarMenuPrincipal){
         mudarCor(7); // branco
 
         posicao(58, 11); cout << "Jogar";
         posicao(58-3, 13); cout << "Informacoes";
-        posicao(58-4, 15); cout << "Ranking top 10";
+        posicao(58-4, 15); cout << "Ranking top 15";
         posicao(58, 17); cout << "Sair";
 
         mudarCor(4); //vermelho
@@ -341,14 +523,14 @@ int printarMenuInicial(){
                 case 13: case ' ': //espaço ou enter para confirmar
                 if(cursorMenuPrincipal==0){ // limpa a tela e finaliza a função
                     mudarCor(7); // branco
+                    dificuldade = escolherDificuldade(finalizarMenuPrincipal);
                     system("cls");
-                    finalizarMenuPrincipal = true;
                 }else if(cursorMenuPrincipal==1){ // limpa a tela e abre informações
                     mudarCor(7); // branco
                     system("cls");
                     informacoesMenu();
                 }else if(cursorMenuPrincipal==2){// limpa a tela e abre as 10 melhores pontuacoes
-                    exibirTop10();
+                    exibirTop15();
                     system("cls");
                 }else if(cursorMenuPrincipal==3){ // finaliza o programa
                     mudarCor(7); // branco
@@ -361,6 +543,9 @@ int printarMenuInicial(){
                 cursorMenuPrincipal = cursorMenuPrincipalNew;
             }
         }
+    }
+    if (finalizarMenuPrincipal == true && dificuldade > 0){
+        return dificuldade;
     }
 }
 
@@ -409,152 +594,6 @@ void fimDeJogo(Personagem& personagem, bool venceu) {
     }else {
         salvarPontuacao(personagem);
         cout << "Pontuação salva!" << endl;
-    }
-}
-
-void atualizarDisparos() {
-
-    if (tickGlobal % TICK_DISPAROS != 0) return;
-
-    for (auto& d : disparos) {
-        if (d.ativo) {
-            d.coordenadasD.y += d.direcao;
-            if (d.coordenadasD.y < 1 || d.coordenadasD.y >= ALTURA-1)
-                d.ativo = false;
-        }
-    }
-}
-
-void moverInimigos() {
-    bool precisaDescer = false;
-
-    // Move os inimigos na direção atual
-    for (auto& inimigo : inimigos) {
-        if (!inimigo.vivo) continue;
-        inimigo.coordenadasI.x += direcaoInimigos;
-
-        // Verifica se chegou na borda da tela
-        if (inimigo.coordenadasI.x <= 1 || inimigo.coordenadasI.x >= LARGURA - 2) {
-            precisaDescer = true;
-        }
-    }
-
-    // Se qualquer inimigo bateu na borda, todos descem e invertem a direção
-    if (precisaDescer) {
-        direcaoInimigos *= -1;
-        for (auto& inimigo : inimigos) {
-            inimigo.coordenadasI.y += 1;
-        }
-    }
-}
-
-void ajustarVelocidadeInimigos() {
-    int vivos = 0;
-    for (auto& i : inimigos)
-        if (i.vivo) vivos++;
-
-    if (vivos == 0) return; // todos mortos — já ganhou
-
-    // quanto menos inimigos, menor o intervalo
-    tickMovInimigos = max(6, 20 * vivos / (int)inimigos.size());
-}
-
-bool verificarColisoes(Personagem &jogador) {
-    for (auto& d : disparos) {
-        if (!d.ativo) continue;
-
-        if (d.direcao == -1) { // Disparo do jogador
-            for (auto& ini : inimigos) {
-                if (ini.vivo &&
-                    d.coordenadasD.x == ini.coordenadasI.x &&
-                    d.coordenadasD.y == ini.coordenadasI.y) {
-
-                    tocarBeep();
-                    ini.vida--; // perde 1 de vida
-                    d.ativo = false;
-
-                    if (ini.vida <= 0) {
-                        ini.vivo = false;
-                        jogador.score += 10 * ini.tipo;
-                        ajustarVelocidadeInimigos();
-                    }
-
-                    break; // encerra o loop após o tiro atingir alguém
-                }
-            }
-
-        } else if (d.direcao == 1) { // Disparo de inimigo
-            if (d.coordenadasD.x == jogador.coordenadasP.x &&
-                d.coordenadasD.y == jogador.coordenadasP.y) {
-
-                jogador.vida--;
-                d.ativo = false;
-                if (jogador.vida <= 0){
-                    return true; // Game Over
-                }
-            }
-        }
-    }
-
-    // Verifica se algum inimigo encostou no jogador
-    for (auto& ini : inimigos) {
-        if (ini.vivo && ini.coordenadasI.y >= jogador.coordenadasP.y) {
-            return true; // Game over
-        }
-    }
-
-    return false;
-}
-
-void inicializarInimigos() {
-    inimigos.clear();
-    int linhas = 4;
-    int colunas = 5;
-    int espacamentoX = 4;
-    int espacamentoY = 1;
-
-    for (int i = 0; i < linhas; ++i) {
-        for (int j = 0; j < colunas; j++) {
-            Inimigos ini;
-            ini.coordenadasI.x = 1 + j * espacamentoX;
-            ini.coordenadasI.y = 1 + i * espacamentoY;
-            ini.vivo = true;
-
-            // Define a vida com base na linha (i)
-            if (i == 0) {         ini.tipo = 3;
-            }else if (i == 1) {   ini.tipo = 2;
-            }else {               ini.tipo = 1;
-            }
-
-            if (ini.tipo == 3) {         ini.vida = 3;
-            }else if (ini.tipo == 2) {   ini.vida = 2;
-            }else {                    ini.vida = 1;
-            }
-
-            inimigos.push_back(ini);
-        }
-    }
-}
-
-void inimigosAtiram(){
-
-    int vivos = 0;
-    for(auto& i : inimigos)
-        if(i.vivo) vivos++;
-
-    if (vivos == 0) return;
-
-    int chance = max(100, 600 * vivos / (int)inimigos.size()); // mínimo 15
-
-    for(auto& i : inimigos){
-        if(i.vivo && rand()%chance == 0){
-            Disparo d;
-            d.coordenadasD.x = i.coordenadasI.x;
-            d.coordenadasD.y = i.coordenadasI.y + 1;
-            d.ativo = true;
-            d.direcao = 1; // disparo inimigo vai para baixo
-            disparos.push_back(d);
-        }
     }
 }
 
@@ -615,6 +654,204 @@ void printarJogo(Personagem personagem, int m[ALTURA][LARGURA]){
         }
         cout << '\n';
     }
+
+    for (auto it = efeitos.begin(); it != efeitos.end(); ) {
+        posicao(it->x, it->y); // ou posicao(it->x, it->y), depende do seu código
+        mudarCor(4); // vermelho, por exemplo
+        cout << 'X';
+        mudarCor(7); // voltar cor normal
+
+        it->duracao--;
+        if (it->duracao <= 0) {
+            it = efeitos.erase(it); // remove efeito já terminado
+        } else {
+            ++it;
+        }
+    }
+}
+
+void atualizarDisparos() {
+
+    if (tickGlobal % TICK_DISPAROS != 0) return;
+
+    for (auto& d : disparos) {
+        if (d.ativo) {
+            d.coordenadasD.y += d.direcao;
+            if (d.coordenadasD.y < 1 || d.coordenadasD.y >= ALTURA-1)
+                d.ativo = false;
+        }
+    }
+
+    disparos.erase(
+        remove_if(disparos.begin(), disparos.end(),
+            [](const Disparo& d) { return !d.ativo; }),
+        disparos.end()
+    );
+
+}
+
+void moverInimigos() {
+    bool precisaDescer = false;
+
+    // Move os inimigos na direção atual
+    for (auto& inimigo : inimigos) {
+        if (!inimigo.vivo) continue;
+        inimigo.coordenadasI.x += direcaoInimigos;
+
+        // Verifica se chegou na borda da tela
+        if (inimigo.coordenadasI.x <= 1 || inimigo.coordenadasI.x >= LARGURA - 2) {
+            precisaDescer = true;
+        }
+    }
+
+    // Se qualquer inimigo bateu na borda, todos descem e invertem a direção
+    if (precisaDescer) {
+        direcaoInimigos *= -1;
+        for (auto& inimigo : inimigos) {
+            inimigo.coordenadasI.y += 1;
+        }
+    }
+}
+
+void ajustarVelocidadeInimigos() {
+    int vivos = 0;
+    for (auto& i : inimigos)
+        if (i.vivo) vivos++;
+
+    if (vivos == 0) return; // todos mortos — já ganhou
+
+    // quanto menos inimigos, menor o intervalo
+    tickMovInimigos = max(6, 20 * vivos / (int)inimigos.size());
+}
+
+void verificarColisoesEntreDisparos(){
+
+    for (size_t i = 0; i < disparos.size(); ++i) {
+        if (!disparos[i].ativo || disparos[i].direcao != -1) continue; // só do jogador
+
+        for (size_t j = 0; j < disparos.size(); ++j) {
+            if (!disparos[j].ativo || disparos[j].direcao != 1) continue; // só inimigos
+
+            if (disparos[i].coordenadasD.x == disparos[j].coordenadasD.x &&
+                disparos[i].coordenadasD.y == disparos[j].coordenadasD.y) {
+
+                // Colisão entre os dois
+                disparos[i].ativo = false;
+                disparos[j].ativo = false;
+                efeitos.push_back({disparos[i].coordenadasD.x, disparos[i].coordenadasD.y, 3});
+                break; // esse disparo do jogador já colidiu, pode parar
+            }
+        }
+    }
+}
+
+bool verificarColisoes(Personagem &jogador) {
+    for (auto& d : disparos) {
+        if (!d.ativo) continue;
+
+        if (d.direcao == -1) { // Disparo do jogador
+            for (auto& ini : inimigos) {
+                if (ini.vivo &&
+                    d.coordenadasD.x == ini.coordenadasI.x &&
+                    d.coordenadasD.y == ini.coordenadasI.y) {
+
+                    tocarBeep(100);
+                    ini.vida--; // perde 1 de vida
+                    d.ativo = false;
+
+                    if (ini.vida <= 0) {
+                        ini.vivo = false;
+                        jogador.score += 10 * ini.tipo;
+                        efeitos.push_back({ini.coordenadasI.x, ini.coordenadasI.y, 5});
+                        ajustarVelocidadeInimigos();
+                    }
+
+                    break; // encerra o loop após o tiro atingir alguém
+                }
+            }
+
+        } else if (d.direcao == 1) { // Disparo de inimigo
+            if (d.coordenadasD.x == jogador.coordenadasP.x &&
+                d.coordenadasD.y == jogador.coordenadasP.y) {
+
+                tocarBeep(500);
+                jogador.vida--;
+                d.ativo = false;
+                if (jogador.vida <= 0){
+                    return true; // Game Over
+                }
+            }
+        }
+    }
+
+    verificarColisoesEntreDisparos();
+
+    // Verifica se algum inimigo encostou no jogador
+    for (auto& ini : inimigos) {
+        if (ini.vivo && ini.coordenadasI.y >= jogador.coordenadasP.y) {
+            return true; // Game over
+        }
+    }
+
+    return false;
+}
+
+void inicializarInimigos(int dificuldade) {
+    inimigos.clear();
+    int linhas = 4;
+    int colunas = 5;
+    int espacamentoX = 4;
+    int espacamentoY = 1;
+
+    for (int i = 0; i < linhas; ++i) {
+        for (int j = 0; j < colunas; j++) {
+            Inimigos ini;
+            ini.coordenadasI.x = 1 + j * espacamentoX;
+            ini.coordenadasI.y = 1 + i * espacamentoY;
+            ini.vivo = true;
+
+            if (dificuldade == 1){
+                ini.tipo = 1;
+            } else if (dificuldade == 2){
+                // Define a vida com base na linha (i) caso a dificuldade seja NORMAL (2)
+                if (i == 0) {         ini.tipo = 3;
+                }else if (i == 1) {   ini.tipo = 2;
+                }else {               ini.tipo = 1;
+                }
+            } else if (dificuldade == 3){
+                ini.tipo = 3;
+            }
+
+            if (ini.tipo == 3) {         ini.vida = 3;
+            }else if (ini.tipo == 2) {   ini.vida = 2;
+            }else {                    ini.vida = 1;
+            }
+
+            inimigos.push_back(ini);
+        }
+    }
+}
+
+void inimigosAtiram(){
+
+    int vivos = 0;
+    for(auto& i : inimigos)
+        if(i.vivo) vivos++;
+
+    if (vivos == 0) return;
+
+    int chance = max(100, 600 * vivos / (int)inimigos.size()); // mínimo 15
+
+    for(auto& i : inimigos){
+        if(i.vivo && rand()%chance == 0){
+            Disparo d;
+            d.coordenadasD.x = i.coordenadasI.x;
+            d.coordenadasD.y = i.coordenadasI.y + 1;
+            d.ativo = true;
+            d.direcao = 1; // disparo inimigo vai para baixo
+            disparos.push_back(d);
+        }
+    }
 }
 
 bool verificarVitoria(){
@@ -658,9 +895,10 @@ int main()
         }
     }
 
-    printarMenuInicial();
+    int dificuldade = printarMenuInicial();
+    int nave = escolherNave();
 
-    inicializarInimigos();
+    inicializarInimigos(dificuldade);
 
     auto inicio = chrono::steady_clock::now();
     int minuto = 0;
@@ -694,6 +932,17 @@ int main()
 
         printarJogo(personagem, m); //desenhar mapa, inimigos, disparos, personagem na tela
 
+        switch (nave){
+        case 1:
+            TICK_MOV_JOGADOR = 2;
+            break;
+        case 2:
+            TICK_MOV_JOGADOR = 4;
+            break;
+        case 3:
+            TICK_MOV_JOGADOR = 8;
+            break;
+        }
 
         ///movimentacao/comandos
         if (tickGlobal - tickUltimoMovJogador >= TICK_MOV_JOGADOR) {
@@ -710,7 +959,7 @@ int main()
         bool teclaEspacoAgora = (GetAsyncKeyState(VK_SPACE) & 0x8000);
         if (teclaEspacoAgora && !teclaEspacoAnterior) {
             if (tickGlobal - tickUltimoDisparoJogador >= TICK_INTERVALO_DISPARO) {
-                dispararProjetil(personagem);
+                dispararProjetil(personagem, nave);
                 tickUltimoDisparoJogador = tickGlobal;
             }
         }
